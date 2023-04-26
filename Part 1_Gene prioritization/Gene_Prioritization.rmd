@@ -1,0 +1,63 @@
+```{r}
+library(dplyr)
+```
+Download the annotation files 
+```{bash}
+download.file("https://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_43/GRCh37_mapping/gencode.v43lift37.annotation.gtf.gz", "gencode.v43lift37.annotation.gtf.gz")
+```
+
+Convert the files into bed format
+```{bash}
+vcf2bed < Z.variantCall.SNPs.vcf > Z.variantCall.SNPs.bed
+gtf2bed < gencode.v43lift37.annotation.gtf > gencode.v43lift37.annotation.bed
+```
+
+```{r}
+var_bed <- read.table("Z.variantCall.SNPs.chr20.bed",sep="\t")
+anno_bed <- read.table("gencode.v43lift37.annotation.bed", fill=TRUE, sep="\t")
+```
+
+```{r}
+anno2 <- anno_bed |> filter(V1=="chr20")
+anno3 <- anno2[grep("protein_coding", anno2$V10),]
+anno5 <- anno3 |> filter(V8=="transcript") |> mutate(transcript_id = sub(".*transcript_id\\s+(\\S+);\\s+gene_type.*", "\\1", V10))
+anno6 <- anno3 |> filter(V8=="exon") |> mutate(transcript_id = sub(".*transcript_id\\s+(\\S+);\\s+gene_type.*", "\\1", V10))
+write.table(anno6, "gencode.v43lift37.annotation.chr20.protein_coding.exon.bed", row.names = FALSE, col.names = FALSE, sep="\t")
+```
+
+Intersect the bed files
+```{bash}
+awk '{gsub(/"/,"",$0); print "chr"$0}' Z.variantCall.SNPs.chr20.bed > Z.variantCall.SNPs.chr20.relabel.bed
+awk '{gsub(/"/,"",$0); print $0}' gencode.v43lift37.annotation.chr20.protein_coding.exon.bed > annotation.relabel.exon.bed
+
+bedtools intersect -a Z.variantCall.SNPs.chr20.relabel.bed -b annotation.relabel.exon.bed > intersect7.bed
+bedtools intersect -b Z.variantCall.SNPs.chr20.relabel.bed -a annotation.relabel.exon.bed > intersect8.bed
+```
+
+```{r}
+inters7 <- read.table("intersect7.bed", fill=TRUE, sep="\t")
+inters8 <- read.table("intersect8.bed", fill=TRUE, sep="\t")
+```
+
+```{r}
+inters7_ <- inters7[order(inters7$V2),]
+inters8_ <- inters8[order(inters8$V2),]
+inters7_$gene_id <- inters8_$V4
+inters7_$transcript_id <- inters8_$V11
+```
+
+```{r}
+top_3 <- inters7_ |> group_by(gene_id, transcript_id) |> summarise(n=n()) |> arrange(desc(n))
+length(unique(top_3[1:13,]$gene_id))
+length(unique(top_3[1:13,]$transcript_id))
+```
+
+```{r}
+df7 <- inters7_ |> select(V1, V2, V3, V6, V7, gene_id, transcript_id) |> filter(transcript_id %in% top_3[1:13,]$transcript_id)
+```
+
+```{r}
+df8 = merge(x = df7, y = anno5, by = "transcript_id", all.x = TRUE)
+df9 = df8 |> select(V1.x, V2.x, V3.x, V6.x, V7.x, gene_id, transcript_id, V2.y, V3.y) |> rename(transcript_start = V2.y, transcript_end = V3.y)
+write.table(df9, "Top10genes_exon.csv", row.names = FALSE, col.names = TRUE, sep=",")
+```
